@@ -1,0 +1,1 @@
+def reverse[A](ls: List[A]) = ls.reverse
