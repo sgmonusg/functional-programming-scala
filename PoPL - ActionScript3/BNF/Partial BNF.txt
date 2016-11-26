@@ -1,0 +1,494 @@
+// Partial BNF for ActionScript3
+// The relevant sections have been marked with a "// ->" heading comment
+// Eg. "// -> 2. If Else statements"
+
+compilationUnit
+	:	(	as2CompilationUnit
+		|	as3CompilationUnit
+		) -> ^(COMPILATION_UNIT as2CompilationUnit? as3CompilationUnit?)
+	;
+as3CompilationUnit
+	:	packageDecl
+		packageBlockEntry*
+		EOF!
+	;
+
+packageDecl
+	:	PACKAGE^ identifier?
+		packageBlock
+	;
+
+packageBlock
+	:	LCURLY
+		packageBlockEntry*
+		RCURLY
+		-> ^(BLOCK packageBlockEntry*)
+	;
+
+packageBlockEntry
+	:	(	importDefinition
+//		|	includeDirective  This is in 'annos' instead
+		|	annos=annotations! { retval.start=placeholder($annos.tree); }
+			mods=modifiers! { placeholder($mods.tree); }
+			(	classDefinition[$annos.tree,$mods.tree]
+			|	interfaceDefinition[$annos.tree,$mods.tree]
+			|	variableDefinition[$annos.tree,$mods.tree]
+			|	methodDefinition[$annos.tree,$mods.tree]
+			|	namespaceDefinition[$annos.tree,$mods.tree]
+			|	useNamespaceDirective
+			)
+		|	SEMI!
+//		|	statement
+		)
+	;
+
+//-> 1. Sequential Statements
+statement
+	:	superStatement
+	|	(LCURLY)=> block
+	|	declarationStatement
+	|	expressionStatement
+	|	ifStatement
+	// For statement
+	|	forEachStatement
+	|	forStatement
+
+	// While statement
+	|	whileStatement
+
+	// do-while statement
+	|	doWhileStatement
+	
+	// with statement
+	|	withStatement
+	
+	// switch statement
+	|	switchStatement
+	
+	// get out of a loop (or switch)
+	|	breakStatement
+
+	// do next iteration of a loop
+	|	continueStatement
+
+	// Return an expression
+	|	returnStatement
+
+	// throw an exception
+	|	throwStatement
+	
+	// handle exceptions
+	|	tryStatement
+	
+	// handle 'default xml namespace = "foo"'
+	|	defaultXMLNamespaceStatement
+
+	// empty statement
+	|	SEMI!
+	;
+	
+superStatement
+	:	SUPER^ arguments semi
+	;
+
+// -> 2. If Else statements	
+ifStatement
+	:	IF^ condition statement
+		((ELSE)=>elseClause)?
+	;
+
+elseClause
+	:	ELSE^ statement
+	;
+
+// -> 2. Switch Statement
+switchStatement
+	:	SWITCH^ condition
+		switchBlock
+	;
+
+switchBlock
+	:	LCURLY
+		(caseStatement)*
+		(defaultStatement)?
+		RCURLY
+		-> ^(BLOCK caseStatement* defaultStatement?)
+	;
+
+
+returnStatement
+	:	RETURN^ expression? semi
+	;
+		
+continueStatement
+	:	CONTINUE^ semi
+	;
+
+breakStatement
+	:	BREAK^ semi
+	;
+
+caseStatement
+	:	CASE^ expression COLON! l=switchStatementList { placeholder($l.tree); }
+	;
+	
+defaultStatement
+	:	DEFAULT^ COLON! l=switchStatementList { placeholder($l.tree); }
+	;
+
+switchStatementList
+	:	statement* -> ^(SWITCH_STATEMENT_LIST statement*)
+	;
+
+
+
+-> 3. For Loop - 
+
+forEachStatement
+	:	f=FOR EACH
+		LPAREN
+		forInClause
+		RPAREN
+		statement
+		-> ^(FOR_EACH[$f] forInClause statement)
+	;
+
+forStatement
+scope InOperator;
+@init {
+	$InOperator::allowed = false;
+}
+	:	f=FOR
+		LPAREN
+		(	(forInClauseDecl IN)=>forInClause RPAREN statement
+			-> ^(FOR_IN[$f] forInClause statement)
+
+		|	traditionalForClause RPAREN statement
+			-> ^($f traditionalForClause statement)
+		)
+	;
+
+traditionalForClause
+	:	a=forInit {placeholder($a.tree);} SEMI!	// initializer
+		b=forCond {placeholder($b.tree);} SEMI!	// condition test
+		c=forIter {placeholder($c.tree);}		// updater
+	;
+
+forInClause
+	:	forInClauseDecl IN! forInClauseTail
+	;
+
+forInClauseDecl
+scope InOperator;
+@init {
+	$InOperator::allowed = false;
+}
+	:	declaration | ident
+	;
+
+
+forInClauseTail
+scope InOperator;
+@init {
+	$InOperator::allowed = true;
+}
+	:	expressionList
+	;
+
+// The initializer for a for loop
+forInit	
+scope InOperator;
+@init {
+	$InOperator::allowed = false;
+}
+	:	(declaration | expressionList )?
+		-> ^(FOR_INIT declaration? expressionList?)
+	;
+
+forCond
+scope InOperator;
+@init {
+	$InOperator::allowed = true;
+}
+	:	expressionList?
+		-> ^(FOR_CONDITION expressionList?)
+	;
+
+forIter
+scope InOperator;
+@init {
+	$InOperator::allowed = true;
+}
+	:	expressionList?
+		-> ^(FOR_ITERATOR expressionList?)
+	;
+
+
+
+//-> 4. Function Declaration + Definition + Call
+
+functionSignature
+	:	parameterDeclarationList typeExpression?
+	;
+
+// TODO: block should be optional here,
+functionCommon
+	:	functionSignature block
+	;
+
+functionExpression
+	:	FUNCTION IDENT? functionCommon
+		-> ^(FUNC_DEF IDENT? functionCommon)
+	;
+
+
+ident
+	:	IDENT
+	|	i=USE -> IDENT[$i]
+	|	i=XML -> IDENT[$i]
+	|	i=DYNAMIC -> IDENT[$i]
+	|	i=NAMESPACE -> IDENT[$i]
+	|	i=IS -> IDENT[$i]
+	|	i=AS -> IDENT[$i]
+	|	i=GET -> IDENT[$i]
+	|	i=SET -> IDENT[$i]
+	;
+
+//-> 5. Arithmetic, Relational, and Logical Operations (with levels to show lower precedence)	
+
+// the mother of all expressions
+expression
+scope InOperator;
+@init {
+	$InOperator::allowed = true;
+}
+	:	assignmentExpression
+	;
+
+// This is a list of expressions.
+expressionList
+	:	assignmentExpression (COMMA assignmentExpression)*
+		-> assignmentExpression+
+	;
+
+// assignment expression (level 13)
+assignmentExpression
+	:	conditionalExpression
+	(	(assignmentOperator)=> o=assignmentOperator^
+		assignmentExpression
+		{demarcate($o.tree);}
+	)*
+	;
+
+assignmentOperator
+	:	ASSIGN
+	| 	STAR_ASSIGN
+	|	DIV_ASSIGN
+	|	MOD_ASSIGN
+	|	PLUS_ASSIGN
+	|	MINUS_ASSIGN
+	|	SL_ASSIGN
+	|	SR_ASSIGN
+	|	BSR_ASSIGN
+	|	BAND_ASSIGN
+	|	BXOR_ASSIGN
+	|	BOR_ASSIGN
+	|	LAND_ASSIGN
+	|	LOR_ASSIGN
+	;
+
+// conditional test (level 12)
+conditionalExpression
+	:	(logicalOrExpression -> logicalOrExpression)
+		(
+			QUESTION
+			conditionalSubExpression
+			-> ^(QUESTION $conditionalExpression conditionalSubExpression)
+		)?
+	;
+conditionalSubExpression
+	:	assignmentExpression COLON! assignmentExpression
+	;
+
+// TODO: should 'and'/'or' have same precidence as '&&'/'||' ?
+
+// logical or (||)  (level 11)
+logicalOrExpression
+	:	logicalAndExpression
+		(o=logicalOrOperator^ logicalAndExpression {demarcate($o.tree);})*
+	;
+
+logicalOrOperator
+	:	LOR | 'or'
+	;
+
+// logical and (&&)  (level 10)
+logicalAndExpression
+	:	bitwiseOrExpression
+		(o=logicalAndOperator^ bitwiseOrExpression {demarcate($o.tree);})*
+	;
+
+logicalAndOperator
+	:	LAND | 'and'
+	;
+
+// bitwise or non-short-circuiting or (|)  (level 9)
+bitwiseOrExpression
+	:	bitwiseXorExpression
+		(o=BOR^ bitwiseXorExpression {demarcate($o.tree);})*
+	;
+
+// exclusive or (^)  (level 8)
+bitwiseXorExpression
+	:	bitwiseAndExpression
+		(o=BXOR^ bitwiseAndExpression {demarcate($o.tree);})*
+	;
+
+// bitwise or non-short-circuiting and (&)  (level 7)
+bitwiseAndExpression
+	:	equalityExpression
+		(o=BAND^ equalityExpression {demarcate($o.tree);})*
+	;
+
+// equality/inequality (==/!=) (level 6)
+equalityExpression
+	:	relationalExpression
+	(	o=equalityOperator^
+		relationalExpression
+		{demarcate($o.tree);}
+	)*
+	;
+
+equalityOperator
+	:	STRICT_EQUAL | STRICT_NOT_EQUAL | NOT_EQUAL | EQUAL
+	;
+	
+// boolean relational expressions (level 5)
+relationalExpression
+	:	shiftExpression
+		((relationalOperator)=> o=relationalOperator^ shiftExpression {demarcate($o.tree);})*
+	;
+
+relationalOperator
+	:	{$InOperator::allowed}? IN
+	|	LT | GT | LE | GE | IS | AS | INSTANCEOF
+	;
+
+// bit shift expressions (level 4)
+shiftExpression
+	:	additiveExpression
+		(o=shiftOperator^ additiveExpression {demarcate($o.tree);})*
+	;
+
+shiftOperator
+	:	SL | SR | BSR
+	;
+
+// binary addition/subtraction (level 3)
+additiveExpression
+	:	multiplicativeExpression
+		(o=additiveOperator^ multiplicativeExpression {demarcate($o.tree);})*
+	;
+
+additiveOperator
+	:	PLUS | MINUS
+	;
+
+// multiplication/division/modulo (level 2)
+multiplicativeExpression
+	:	unaryExpression
+		(	o=multiplicativeOperator^
+			unaryExpression
+			{demarcate($o.tree);}
+		)*
+	;
+
+multiplicativeOperator
+	:	s=STAR -> MULT[$s]
+	|	DIV
+	|	MOD
+	;
+
+//	(level 1)
+unaryExpression
+	:	in=INC unaryExpression -> ^(PRE_INC[$in] unaryExpression)
+	|	de=DEC unaryExpression -> ^(PRE_DEC[$de] unaryExpression)
+	|	MINUS unaryExpression -> ^(UNARY_MINUS unaryExpression)
+	|	PLUS unaryExpression -> ^(UNARY_PLUS unaryExpression)
+	|	unaryExpressionNotPlusMinus
+	;
+
+unaryExpressionNotPlusMinus
+	:	DELETE postfixExpression -> ^(DELETE postfixExpression)
+	|	VOID unaryExpression -> ^(VOID unaryExpression)
+	|	TYPEOF unaryExpression -> ^(TYPEOF unaryExpression)
+	|	LNOT unaryExpression -> ^(LNOT unaryExpression)
+	|	BNOT unaryExpression -> ^(BNOT unaryExpression)
+	|	postfixExpression
+	;
+
+// qualified names, array expressions, method invocation, post inc/dec
+postfixExpression
+	:	(primaryExpression -> primaryExpression)
+		(	poi=propOrIdent[root_0, retval.start] -> $poi
+		|	(LBRACK expression rb=RBRACK -> ^(ARRAY_ACC $postfixExpression expression)) {demarcate(root_0.getFirstChild()); root_0.getFirstChild().setStopToken((LinkedListToken)$rb);}
+		|	E4X_DESC qualifiedIdentifier -> ^(E4X_DESC $postfixExpression qualifiedIdentifier)
+		|	DOT LPAREN expression RPAREN -> ^(E4X_FILTER $postfixExpression expression)
+		|	d=DOT e4xAttributeIdentifier -> ^(PROPERTY_OR_IDENTIFIER[$d] $postfixExpression e4xAttributeIdentifier)
+		|	d=DOT STAR -> ^(PROPERTY_OR_IDENTIFIER[$d] $postfixExpression STAR)
+		|	(arguments -> ^(METHOD_CALL $postfixExpression arguments)) {demarcate(root_0.getFirstChild());}
+		)*
+
+		( 	in=INC -> ^(POST_INC[$in] $postfixExpression)
+	 	|	de=DEC -> ^(POST_DEC[$de] $postfixExpression)
+		)?
+ 	;
+
+
+e4xAttributeIdentifier
+	:	E4X_ATTRI
+		(	qualifiedIdent -> ^(E4X_ATTRI_PROPERTY qualifiedIdent)
+		|	STAR -> ^(E4X_ATTRI_STAR)
+		|	LBRACK expression RBRACK -> ^(E4X_ATTRI_EXPR expression)
+		)
+	;
+
+primaryExpression
+	:	UNDEFINED
+	|	constant
+	|	arrayLiteral
+	|	objectLiteral
+	|	functionExpression
+	|	newExpression
+	|	encapsulatedExpression
+	|	e4xAttributeIdentifier
+	|	qualifiedIdent
+	;
+
+propOrIdent[LinkedListTree identPrimary, Token startToken]
+	:	
+		{ retval.start = startToken; }
+		d=DOT propId=qualifiedIdent
+		/* without further semantic analysis, we can't
+		   tell if a.b is an access of the property 'b'
+		   from the var 'a' or a reference to the type
+		   'b' in the package 'a'.  (This could be
+		   resolved in an AST post-processing step) */
+		-> ^(PROPERTY_OR_IDENTIFIER[$d] {$identPrimary} $propId)
+	;
+
+constant
+	:	xmlLiteral
+	|	regexpLiteral
+	|	number
+	|	STRING_LITERAL
+	|	TRUE
+	|	FALSE
+	|	NULL
+	;
+
+number	:	HEX_LITERAL
+	|	DECIMAL_LITERAL
+	|	OCTAL_LITERAL
+	|	FLOAT_LITERAL
+	;
